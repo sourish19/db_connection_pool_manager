@@ -1,0 +1,15 @@
+{
+  "name": "db_connection_pool_manager",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "node": "^26.8.1"
+  }
+}
