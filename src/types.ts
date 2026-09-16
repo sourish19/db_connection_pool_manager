@@ -11,7 +11,7 @@ export type Config = {
 
 export type ConnectionCreator = {
 	query: (sql: string) => Promise<unknown>;
-	ping: () => Promise<unknown>;
+	ping: () => Promise<boolean>;
 	close: () => Promise<unknown>;
 };
 

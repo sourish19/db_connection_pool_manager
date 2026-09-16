@@ -24,25 +24,53 @@ export class Connection {
 		this.mock = mockConnection;
 	}
 
+	async query(sql: string) {
+		// INFO: Validate connection is healthy
+		if (this.mock === null || this.state === "destroyed")
+			throw new Error("Connection is not initialized or it is destroyed");
+
+		try {
+			const dbQuerry = await this.mock.query(sql);
+
+			this.lastUsedAt = Date.now();
+
+			return dbQuerry;
+		} catch (err: any) {
+			console.error("Db Querry Error: ", err);
+			throw new Error("Error occured");
+		}
+	}
+
 	async ping() {
 		// INFO: Validate connection is healthy
 		if (this.mock === null || this.state === "destroyed")
 			throw new Error("Connection is not initialized or destroyed");
 
-		const pong = await this.mock.ping();
+		try {
+			const pong = await this.mock.ping();
 
-		if (!pong) {
-			this.close();
+			return pong;
+		} catch (err: any) {
+			console.error(err);
 			return false;
 		}
-
-		return true;
 	}
 
 	async close() {
 		// INFO: Clean up resources
-		this.state = "destroyed";
-		this.mock = null;
-		return true;
+		if (this.mock === null || this.state === "destroyed")
+			throw new Error("Connection is not initialized or destroyed");
+
+		try {
+			const closeDb = await this.mock.close();
+
+			this.state = "destroyed";
+			this.mock = null;
+
+			return closeDb;
+		} catch (err: any) {
+			console.error(err);
+			return false;
+		}
 	}
 }

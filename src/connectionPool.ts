@@ -18,7 +18,7 @@ export class ConnectionPool extends EventEmitter {
 		this.idleConnections = []; // Stack of idle connections
 		this.inUseConnections = new Set(); // Connections currently in use
 		this.waitQueue = []; // Queued acquire requests
-		this.state = "accepting"; // 'accepting' | 'draining' | 'destroyed'
+		this.state = "accepting";
 
 		this.init();
 	}
@@ -31,11 +31,17 @@ export class ConnectionPool extends EventEmitter {
 		for (let i = 0; i < minConnections; i++) {
 			const id = generateId();
 
-			const connection = new Connection(id, this.config.connectionCreator);
+			try {
+				const connection = new Connection(id, this.config.connectionCreator);
 
-			this.idleConnections.push(connection);
+				this.idleConnections.push(connection);
 
-			this.emit("connect", connection);
+				this.emit("connect", connection);
+			} catch (err: any) {
+				// ERROR: if the connection creation failed
+				this.emit("error");
+				return;
+			}
 		}
 	}
 
@@ -111,10 +117,13 @@ export class ConnectionPool extends EventEmitter {
 	}
 
 	release(connection: Connection) {
-		// TODO
 		// 1. Validate connection health
 		// 2. Return to idle pool or destroy
 		// 3. Process next queued request
+	}
+
+	isHealthy(connection: Connection) {
+		connection.ping()
 	}
 
 	async drain() {
@@ -128,8 +137,14 @@ export class ConnectionPool extends EventEmitter {
 	}
 
 	getStats() {
-		// TODO
 		// Return { idle, inUse, waiting, total, state }
+		return {
+			idle: this.idleConnections.length,
+			inUse: this.inUseConnections.size,
+			waiting: this.waitQueue.length,
+			total: this.inUseConnections.size + this.idleConnections.length,
+			state: this.state,
+		};
 	}
 }
 
