@@ -3,13 +3,13 @@ import { EventEmitter } from "node:events";
 import { Connection } from "./connection";
 import { connectionCreator, generateId } from "./utils";
 
-import type { Config } from "./types";
+import type { Config, WaitQueue } from "./types";
 
 export class ConnectionPool extends EventEmitter {
 	config: Config;
 	idleConnections: Connection[];
-	inUseConnections: Set<string>;
-	waitQueue: string[];
+	inUseConnections: Set<Connection>;
+	waitQueue: WaitQueue[];
 	state: "accepting" | "draining" | "destroyed";
 
 	constructor(config: Config) {
@@ -31,7 +31,7 @@ export class ConnectionPool extends EventEmitter {
 		for (let i = 0; i < minConnections; i++) {
 			const id = generateId();
 
-			const connection = new Connection(id, connectionCreator);
+			const connection = new Connection(id, this.config.connectionCreator);
 
 			this.idleConnections.push(connection);
 
@@ -40,10 +40,74 @@ export class ConnectionPool extends EventEmitter {
 	}
 
 	async acquire(timeout = this.config.acquireTimeout) {
-		// 1. Return idle connection if available
-		// 2. Create new connection if pool not full
-		// 3. Queue request if pool full
-		// 4. Reject if timeout exceeded or pool destroyed
+		return new Promise((res, rej) => {
+			// 1. Check for pool state & based on that do the other processing
+			if (this.state === "destroyed" || this.state === "draining") {
+				rej(new Error("Connection Pool is not accepting any request"));
+				return;
+			}
+
+			const id = generateId();
+
+			// 2. Start the timer
+			const timer = setTimeout(() => {
+				const queuedReqIdx = this.waitQueue.findIndex((req) => req.id === id);
+
+				if (queuedReqIdx !== -1) {
+					this.waitQueue.splice(queuedReqIdx, 1);
+				}
+
+				rej(new Error("Acquire Timeout"));
+			}, timeout);
+
+			// Helper function
+			const connectionHelperHandler = (connection: Connection) => {
+				clearTimeout(timer);
+				connection.state = "in-use";
+				this.inUseConnections.add(connection);
+				this.emit("acquire", { connectionId: connection.id });
+				res(connection);
+			};
+
+			// 3. Return idle connection if available
+			const connection = this.idleConnections[0];
+
+			if (connection) {
+				this.idleConnections.shift();
+				connectionHelperHandler(connection);
+				return;
+			}
+
+			// 4. Create new connection if pool not full
+			const poolSize = this.inUseConnections.size + this.idleConnections.length;
+
+			if (poolSize < this.config.maxConnections) {
+				try {
+					const newConnection = new Connection(
+						id,
+						this.config.connectionCreator,
+					);
+					this.emit("connect", { connectionId: newConnection.id });
+					connectionHelperHandler(newConnection);
+					return;
+				} catch (err: any) {
+					// ERROR: if the connection creation failed
+					clearTimeout(timer);
+					this.emit("error");
+					rej(new Error(err));
+					return;
+				}
+			}
+
+			// 5. Queue request if pool full
+			const request = {
+				id,
+				res: connectionHelperHandler,
+				rej,
+				timer,
+			};
+			this.waitQueue.push(request);
+		});
 	}
 
 	release(connection: Connection) {

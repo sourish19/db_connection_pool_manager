@@ -1,3 +1,5 @@
+import type { Connection } from "./connection";
+
 export type Config = {
 	minConnections: number; // Minimum idle connections to maintain
 	maxConnections: number; // Maximum total connections
@@ -8,7 +10,14 @@ export type Config = {
 };
 
 export type ConnectionCreator = {
-	query: (sql:string) => Promise<unknown>;
+	query: (sql: string) => Promise<unknown>;
 	ping: () => Promise<unknown>;
 	close: () => Promise<unknown>;
+};
+
+export type WaitQueue = {
+	id: string;
+	res: (connection: Connection) => void;
+	rej: (reason?: any) => void;
+	timer: NodeJS.Timeout;
 };
