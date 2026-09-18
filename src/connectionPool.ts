@@ -73,24 +73,15 @@ export class ConnectionPool extends EventEmitter {
 					this.waitQueue.splice(queuedReqIdx, 1);
 				}
 
-				rej(new Error("Acquire Timeout"));
+				rej(new Error("timeout"));
 			}, timeout);
-
-			// Helper function
-			const connectionHelperHandler = (connection: Connection) => {
-				clearTimeout(timer);
-				connection.state = "in-use";
-				this.inUseConnections.add(connection);
-				this.emit("acquire", { connectionId: connection.id });
-				res(connection);
-			};
 
 			// 3. Return idle connection if available
 			const connection = this.idleConnections[0];
 
 			if (connection) {
 				this.idleConnections.shift();
-				connectionHelperHandler(connection);
+				this.connectionHelperHandler(connection, timer, res);
 				return;
 			}
 
@@ -104,7 +95,7 @@ export class ConnectionPool extends EventEmitter {
 						this.config.connectionCreator,
 					);
 					this.emit("connect", { connectionId: newConnection.id });
-					connectionHelperHandler(newConnection);
+					this.connectionHelperHandler(newConnection, timer, res);
 					return;
 				} catch (err: any) {
 					// ERROR: if the connection creation failed
@@ -118,8 +109,9 @@ export class ConnectionPool extends EventEmitter {
 			// 5. Queue request if pool full
 			const request = {
 				id,
-				res: connectionHelperHandler,
+				res,
 				rej,
+				connectionHelper: this.connectionHelperHandler.bind(this),
 				timer,
 			};
 			this.waitQueue.push(request);
@@ -128,14 +120,57 @@ export class ConnectionPool extends EventEmitter {
 
 	async release(connection: Connection) {
 		try {
-			// 1. Validate connection health
-			const connectionHealth = await this.isHealthy(connection);
+			// helper function for creating new connection
+			const createNewConnection = () => {
+				const id = generateId();
+				const newConnection = new Connection(id, this.config.connectionCreator);
+				this.emit("connect", { connectionId: newConnection.id });
+				return newConnection;
+			};
 
-			if (!connectionHealth) {
+			// 1. Check if the connection is marked for removal
+			if (connection.isMarkedForRemoval) {
+				// close it & remove it from inUseConnections
+				await connection.close();
+				this.inUseConnections.delete(connection);
+			} else {
+				// 2. Validate connection health
+				const connectionHealth = await this.isHealthy(connection);
+
+				// 3. destroy connection & create new one
+				if (!connectionHealth) {
+					await connection.close();
+					this.inUseConnections.delete(connection);
+					const newConnection = createNewConnection();
+					newConnection.state = "idle";
+					this.idleConnections.push(newConnection);
+				} else {
+					// 4. Return connection to idle pool
+					this.inUseConnections.delete(connection);
+					connection.state = "idle";
+					this.idleConnections.push(connection);
+				}
 			}
-			// 2. Return to idle pool or destroy
-			// 3. Process next queued request
-		} catch (err: any) {}
+
+			// 5. Process next queued request
+			const request = this.waitQueue.shift();
+
+			if (!request) return;
+
+			// check total pool size
+			const poolSize = this.inUseConnections.size + this.idleConnections.length;
+			const reuseConnection = this.idleConnections.shift();
+
+			if (reuseConnection) {
+				request.connectionHelper(reuseConnection, request.timer, request.res);
+				return;
+			}
+			const newConnection = createNewConnection();
+
+			request.connectionHelper(newConnection, request.timer, request.res);
+		} catch (err: any) {
+			console.error(err);
+		}
 	}
 
 	async isHealthy(connection: Connection) {
@@ -183,8 +218,19 @@ export class ConnectionPool extends EventEmitter {
 		);
 
 		this.idleConnections = filteredConnection;
+	}
 
-		return;
+	// INFO: Helper function
+	private connectionHelperHandler(
+		connection: Connection,
+		timer: NodeJS.Timeout,
+		res: (value: unknown) => void,
+	) {
+		clearTimeout(timer);
+		connection.state = "in-use";
+		this.inUseConnections.add(connection);
+		this.emit("acquire", { connectionId: connection.id });
+		res(connection);
 	}
 
 	async drain() {

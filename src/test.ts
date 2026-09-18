@@ -83,11 +83,14 @@ describe("ConnectionPool", () => {
 			}
 
 			const acquirePromise = pool.acquire(1000);
+			console.log(acquirePromise)
 			const stats = pool.getStats();
+			console.log(stats)
 			expect(stats.waiting).toBe(1);
 
 			pool.release(conns[0]);
 			const conn = await acquirePromise;
+			console.log(conn)
 			expect(conn).toBeDefined();
 		});
 

@@ -12,18 +12,18 @@ export const connectionCreator = (): ConnectionCreator => {
 	};
 };
 
-const delay = (): Promise<void> => {
+const delay = (delayTime: number): Promise<void> => {
 	const timeout = Math.floor(Math.random() * 5) + 1;
 
 	return new Promise((res) => {
-		setTimeout(res, timeout * 1000);
+		setTimeout(res, timeout * delayTime);
 	});
 };
 
 const ping = async () => {
 	const generateRandomNum = Math.floor(Math.random() * 100) + 1;
 
-	await delay();
+	await delay(10);
 
 	if (generateRandomNum !== 8 && generateRandomNum !== 71) {
 		return true;
@@ -37,13 +37,13 @@ const ping = async () => {
 const close = async () => {
 	const generateRandomNum = Math.floor(Math.random() * 10) + 1;
 
-	await delay();
+	await delay(20);
 
 	if (generateRandomNum !== 8) {
 		return {
 			success: true,
 			message: "Database Connection Closed",
-		};	
+		};
 	} else {
 		throw new Error("Database Connection Error");
 	}
@@ -52,11 +52,11 @@ const close = async () => {
 const query = async (sql: string) => {
 	const generateRandomNum = Math.floor(Math.random() * 100) + 1;
 
-	await delay();
+	await delay(30);
 
 	if (generateRandomNum !== 9) {
 		return [{ success: true, message: "mock query from db" }];
 	} else {
-		throw new Error("Database Connection Error");
+		throw new Error("Database Query Error");
 	}
 };

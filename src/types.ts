@@ -17,7 +17,12 @@ export type ConnectionCreator = {
 
 export type WaitQueue = {
 	id: string;
-	res: (connection: Connection) => void;
+	res: (value: unknown) => void;
 	rej: (reason?: any) => void;
+	connectionHelper: (
+		connection: Connection,
+		timer: NodeJS.Timeout,
+		res: (value: unknown) => void,
+	) => void;
 	timer: NodeJS.Timeout;
 };

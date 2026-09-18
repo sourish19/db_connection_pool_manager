@@ -38,10 +38,8 @@ export class Connection {
 
 			return dbQuerry;
 		} catch (err: any) {
-			// TODO: Failed query should be marked for removal
-			console.error("Db Querry Error: ", err);
 			this.isMarkedForRemoval = true;
-			throw new Error("Error occured");
+			throw new Error(err);
 		}
 	}
 
