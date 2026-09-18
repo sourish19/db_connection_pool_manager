@@ -122,8 +122,67 @@ export class ConnectionPool extends EventEmitter {
 		// 3. Process next queued request
 	}
 
-	isHealthy(connection: Connection) {
-		connection.ping()
+	async isHealthy(connection: Connection) {
+		// 1. Remove connection that exceeds the idleTime
+		// TODO: currently this runs everytime so need to add some conditions
+		await this.removeIdleTimeoutConn();
+
+		try {
+			// 2. Check if the connecction is marked for removal, if yes then just remove it
+			const isConnMarkedForRemoval = connection.isMarkedForRemoval;
+
+			if (isConnMarkedForRemoval) {
+				const closeConn = await connection.close();
+				return false;
+			}
+
+			// 3. Ping the connection & check for its status
+			const pong = await connection.ping();
+
+			if (!pong) {
+				// If ping is false then close the connection
+				const isClosed = await connection.close();
+				return false;
+			}
+
+			return true;
+		} catch (err: any) {
+			this.emit("error", err);
+			return false;
+		}
+	}
+
+	private async removeIdleTimeoutConn() {
+		const idealConnToBeRemoved = this.idleConnections
+			.map((val, idx) => ({ val, idx }))
+			.filter((ele) => {
+				// Take the connection last used time & get the curr time
+				const connLastUsed = ele.val.lastUsedAt;
+				const currTime = Date.now();
+
+				// compare lastUsed & currTime (get the difference)
+				const comparedTime = currTime - connLastUsed;
+				// check if the compared time is greater than | equals or less than idleTimeout
+				if (comparedTime >= this.config.idleTimeout) return;
+			});
+
+		// Loop through the connection that are to be get removed and close those conn
+		for (const item of idealConnToBeRemoved) {
+			try {
+				await item.val.close();
+			} catch (err: any) {
+				this.emit("error", { err, connectionId: item.val.id });
+			}
+		}
+
+		// Create a new array which dosent include the conn that are to be removed
+		const filteredConnection = this.idleConnections.filter((remove, index) =>
+			idealConnToBeRemoved.every((obj) => obj.val.id !== remove.id),
+		);
+
+		this.idleConnections = filteredConnection;
+
+		return;
 	}
 
 	async drain() {

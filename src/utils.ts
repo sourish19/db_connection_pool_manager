@@ -20,27 +20,33 @@ const delay = (): Promise<void> => {
 	});
 };
 
-const ping = async (): Promise<boolean> => {
-	const generateRandomNum = Math.floor(Math.random() * 10) + 1;
+const ping = async () => {
+	const generateRandomNum = Math.floor(Math.random() * 100) + 1;
 
 	await delay();
 
-	if (generateRandomNum < 8) {
+	if (generateRandomNum !== 8 && generateRandomNum !== 71) {
 		return true;
-	} else if (generateRandomNum < 10) {
+	} else if (generateRandomNum === 8) {
 		return false;
-	} else {
+	} else if (generateRandomNum === 71) {
 		throw new Error("Database Connection Error");
 	}
 };
 
 const close = async () => {
+	const generateRandomNum = Math.floor(Math.random() * 10) + 1;
+
 	await delay();
 
-	return {
-		success: true,
-		message: "Database Connection Closed",
-	};
+	if (generateRandomNum !== 8) {
+		return {
+			success: true,
+			message: "Database Connection Closed",
+		};	
+	} else {
+		throw new Error("Database Connection Error");
+	}
 };
 
 const query = async (sql: string) => {

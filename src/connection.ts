@@ -6,6 +6,7 @@ export class Connection {
 	lastUsedAt: number;
 	state: "idle" | "in-use" | "destroyed";
 	mock: null | ConnectionCreator;
+	isMarkedForRemoval: boolean;
 	connectionCreator: () => ConnectionCreator;
 
 	constructor(id: string, connectionCreator: () => ConnectionCreator) {
@@ -15,6 +16,7 @@ export class Connection {
 		this.state = "idle";
 		this.connectionCreator = connectionCreator;
 		this.mock = null;
+		this.isMarkedForRemoval = false;
 
 		this.init();
 	}
@@ -36,7 +38,9 @@ export class Connection {
 
 			return dbQuerry;
 		} catch (err: any) {
+			// TODO: Failed query should be marked for removal
 			console.error("Db Querry Error: ", err);
+			this.isMarkedForRemoval = true;
 			throw new Error("Error occured");
 		}
 	}
@@ -51,8 +55,8 @@ export class Connection {
 
 			return pong;
 		} catch (err: any) {
-			console.error(err);
-			return false;
+			console.error("Db ping Error: ", err);
+			throw new Error("Error occured");
 		}
 	}
 
@@ -69,8 +73,8 @@ export class Connection {
 
 			return closeDb;
 		} catch (err: any) {
-			console.error(err);
-			return false;
+			console.error("Db close Error: ", err);
+			throw new Error("Error occured");
 		}
 	}
 }
