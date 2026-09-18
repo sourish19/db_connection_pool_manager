@@ -11,6 +11,7 @@ export class ConnectionPool extends EventEmitter {
 	inUseConnections: Set<Connection>;
 	waitQueue: WaitQueue[];
 	state: "accepting" | "draining" | "destroyed";
+	periodicCheckTimer!: NodeJS.Timeout | null;
 
 	constructor(config: Config) {
 		super();
@@ -28,21 +29,30 @@ export class ConnectionPool extends EventEmitter {
 
 		const minConnections = this.config.minConnections;
 
+		// loop through minConnections and establish connections
 		for (let i = 0; i < minConnections; i++) {
 			const id = generateId();
 
+			// TODO: Need to check this out
 			try {
 				const connection = new Connection(id, this.config.connectionCreator);
 
 				this.idleConnections.push(connection);
 
-				this.emit("connect", connection);
+				this.emit("connect", { connectionId: connection.id });
 			} catch (err: any) {
 				// ERROR: if the connection creation failed
-				this.emit("error");
-				return;
+				this.emit("error", { connectionId: id });
 			}
 		}
+
+		// periodically check in the idleConnection which should get removed
+		const timer = setInterval(
+			() => this.removeIdleTimeoutConn(),
+			this.config.connectionCheckInterval,
+		);
+
+		this.periodicCheckTimer = timer;
 	}
 
 	async acquire(timeout = this.config.acquireTimeout) {
@@ -116,34 +126,26 @@ export class ConnectionPool extends EventEmitter {
 		});
 	}
 
-	release(connection: Connection) {
-		// 1. Validate connection health
-		// 2. Return to idle pool or destroy
-		// 3. Process next queued request
+	async release(connection: Connection) {
+		try {
+			// 1. Validate connection health
+			const connectionHealth = await this.isHealthy(connection);
+
+			if (!connectionHealth) {
+			}
+			// 2. Return to idle pool or destroy
+			// 3. Process next queued request
+		} catch (err: any) {}
 	}
 
 	async isHealthy(connection: Connection) {
-		// 1. Remove connection that exceeds the idleTime
-		// TODO: currently this runs everytime so need to add some conditions
-		await this.removeIdleTimeoutConn();
-
 		try {
-			// 2. Check if the connecction is marked for removal, if yes then just remove it
-			const isConnMarkedForRemoval = connection.isMarkedForRemoval;
-
-			if (isConnMarkedForRemoval) {
-				const closeConn = await connection.close();
-				return false;
-			}
-
-			// 3. Ping the connection & check for its status
+			// 2. Ping the connection & check for its status
 			const pong = await connection.ping();
 
-			if (!pong) {
+			if (!pong)
 				// If ping is false then close the connection
-				const isClosed = await connection.close();
 				return false;
-			}
 
 			return true;
 		} catch (err: any) {
@@ -206,32 +208,3 @@ export class ConnectionPool extends EventEmitter {
 		};
 	}
 }
-
-/*
-
-- initialize the ORM / DB driver [in my case its mock Db]
-
-- First ConnectionPool will get initialized which is I think the init() method
-
-- The n (its the minConnections) number of Connections will get created with id = 1,2 & state will be idle
-
-- the init() metod will initialize the minConnections
-
-- so after each & every connection is being created then "connect" event will get emmited [I am not sure about that]
-
-- when any db query is done so first it uses these minConnections
-
-- if there are more db querry requires then more connection will get created [acquire method will be used here]
-
-- acquire will check if there is any idel connection and if not then it will create a new connection if the connection dosent exceeds maxConnections otherwise it will send it to queue
-
-- drain method will first set the state to draining for stop acqueiring more requests and whatever connecction are still there it will IG destroy the connection and shut down
-
-- destroy will destroy all connections and force shut down
-
-- getStats will give the stats of the ConnectionPool
-
-- ConnectionPool has a instance variable called state which states the lifecycle of the Pool
-
-
-*/
