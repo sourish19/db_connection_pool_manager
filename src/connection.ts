@@ -59,8 +59,9 @@ export class Connection {
 
 	async close() {
 		// INFO: Clean up resources
-		if (this.mock === null || this.state === "destroyed")
-			throw new Error("Connection is not initialized or destroyed");
+		if (this.mock === null)
+			// later can add this.state === "destroyed"
+			throw new Error("Connection is not initialized");
 
 		try {
 			const closeDb = await this.mock.close();

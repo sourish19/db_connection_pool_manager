@@ -21,7 +21,7 @@ const delay = (delayTime: number): Promise<void> => {
 };
 
 const ping = async () => {
-	const generateRandomNum = Math.floor(Math.random() * 100) + 1;
+	const generateRandomNum = Math.floor(Math.random() * 200) + 1;
 
 	await delay(10);
 
@@ -35,7 +35,7 @@ const ping = async () => {
 };
 
 const close = async () => {
-	const generateRandomNum = Math.floor(Math.random() * 10) + 1;
+	const generateRandomNum = Math.floor(Math.random() * 200) + 1;
 
 	await delay(20);
 
@@ -50,7 +50,7 @@ const close = async () => {
 };
 
 const query = async (sql: string) => {
-	const generateRandomNum = Math.floor(Math.random() * 100) + 1;
+	const generateRandomNum = Math.floor(Math.random() * 200) + 1;
 
 	await delay(30);
 

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 import { Connection } from "./connection";
-import { connectionCreator, generateId } from "./utils";
+import { generateId } from "./utils";
 
 import type { Config, WaitQueue } from "./types";
 
@@ -11,7 +11,9 @@ export class ConnectionPool extends EventEmitter {
 	inUseConnections: Set<Connection>;
 	waitQueue: WaitQueue[];
 	state: "accepting" | "draining" | "destroyed";
-	periodicCheckTimer!: NodeJS.Timeout | null;
+	private periodicCheckTimer: NodeJS.Timeout | null;
+	private drainResolver: ((value: void | PromiseLike<void>) => void) | null;
+	private drainPromise: Promise<void> | null;
 
 	constructor(config: Config) {
 		super();
@@ -20,6 +22,9 @@ export class ConnectionPool extends EventEmitter {
 		this.inUseConnections = new Set(); // Connections currently in use
 		this.waitQueue = []; // Queued acquire requests
 		this.state = "accepting";
+		this.periodicCheckTimer = null;
+		this.drainResolver = null;
+		this.drainPromise = null;
 
 		this.init();
 	}
@@ -36,7 +41,6 @@ export class ConnectionPool extends EventEmitter {
 			// TODO: Need to check this out
 			try {
 				const connection = new Connection(id, this.config.connectionCreator);
-
 				this.idleConnections.push(connection);
 				this.emit("connect", { connectionId: connection.id });
 			} catch (err: any) {
@@ -57,8 +61,13 @@ export class ConnectionPool extends EventEmitter {
 	async acquire(timeout = this.config.acquireTimeout) {
 		return new Promise((res, rej) => {
 			// 1. Check for pool state & based on that do the other processing
-			if (this.state === "destroyed" || this.state === "draining") {
-				rej(new Error("Connection Pool is not accepting any request"));
+			if (this.state === "destroyed") {
+				rej(new Error("destroyed"));
+				return;
+			}
+
+			if (this.state === "draining") {
+				rej(new Error("draining"));
 				return;
 			}
 
@@ -117,6 +126,23 @@ export class ConnectionPool extends EventEmitter {
 	}
 
 	async release(connection: Connection) {
+		// 1. Check for pool state & based on that do the other processing
+		if (this.state === "destroyed")
+			throw new Error("Connection Pool is destroyed");
+
+		if (this.state === "draining") {
+			// 1. when the pool is draining just close the connection
+			this.inUseConnections.delete(connection);
+			connection.state = "destroyed";
+			await connection.close();
+
+			this.inUseConnections.size === 0 &&
+				this.drainResolver &&
+				this.drainResolver();
+
+			return;
+		}
+
 		try {
 			// helper function for creating new connection
 			const createNewConnection = () => {
@@ -152,21 +178,7 @@ export class ConnectionPool extends EventEmitter {
 			}
 
 			// 5. Process next queued request
-			const request = this.waitQueue.shift();
-
-			if (!request) return;
-
-			// // check total pool size
-			// const poolSize = this.inUseConnections.size + this.idleConnections.length;
-			const reuseConnection = this.idleConnections.shift();
-
-			if (reuseConnection) {
-				request.connectionHelper(reuseConnection, request.timer, request.res);
-				return;
-			}
-			const newConnection = createNewConnection();
-
-			request.connectionHelper(newConnection, request.timer, request.res);
+			this.processQueueReq(createNewConnection);
 		} catch (err: any) {
 			this.emit("error", err);
 			throw err;
@@ -186,6 +198,24 @@ export class ConnectionPool extends EventEmitter {
 			this.emit("error", err);
 			return false;
 		}
+	}
+
+	private processQueueReq(createNewConnection: () => Connection) {
+		const request = this.waitQueue.shift();
+
+		if (!request) return;
+
+		// // check total pool size
+		// const poolSize = this.inUseConnections.size + this.idleConnections.length;
+		const reuseConnection = this.idleConnections.shift();
+
+		if (reuseConnection) {
+			request.connectionHelper(reuseConnection, request.timer, request.res);
+			return;
+		}
+		const newConnection = createNewConnection();
+
+		request.connectionHelper(newConnection, request.timer, request.res);
 	}
 
 	private async removeIdleTimeoutConn() {
@@ -232,14 +262,82 @@ export class ConnectionPool extends EventEmitter {
 		res(connection);
 	}
 
-	async drain() {
-		// TODO
+	drain() {
 		// Stop accepting new requests, allow in-flight to finish
+		// release will call this resolve this function when inUseConnections is 0
+
+		// 1. check for repetead drain calls
+		if (this.drainResolver !== null) return this.drainPromise;
+
+		// stor the org promise for avoiding multi drain calls
+		this.drainPromise = new Promise<void>((res, rej) => {
+			// 2. make the state to draining & emit drain
+			this.state = "draining";
+			this.emit("drain");
+
+			// 3. stop the periodic timer
+			this.periodicCheckTimer ? clearInterval(this.periodicCheckTimer) : null;
+
+			// 4. reject all the req in waitQueue & remove from the queue
+			this.waitQueue.forEach((req) => req.rej("Pool is draining"));
+
+			this.waitQueue = [];
+
+			// 5. remove idleConnections immediatly resolve the Promise when the inUseConnections is 0
+			this.idleConnections.forEach((conn) => {
+				conn.state = "destroyed";
+				conn.close();
+			});
+
+			this.idleConnections = [];
+
+			if (this.inUseConnections.size === 0) {
+				res();
+				this.drainResolver = null;
+				return;
+			}
+
+			// 6. store the resolve in a variable
+			this.drainResolver = res;
+		});
+
+		return this.drainPromise;
 	}
 
 	async destroy() {
-		// TODO
 		// Force-close everything immediately
+		// 1. make the pool state to be destroyed & stop the periodicCheckTimer
+		this.state = "destroyed";
+		if (this.periodicCheckTimer) clearInterval(this.periodicCheckTimer);
+		this.periodicCheckTimer = null;
+
+		const allPromise: Promise<unknown>[] = [];
+
+		// 2. make the state of each inUseConnections & idleConnection to be destroyed & remove them
+		this.idleConnections.map((conn) => {
+			allPromise.push(conn.close());
+			conn.state = "destroyed";
+		});
+		this.inUseConnections.forEach((conn) => {
+			allPromise.push(conn.close());
+			conn.state = "destroyed";
+		});
+
+		const results = await Promise.allSettled(allPromise);
+
+		results.forEach((val) => {
+			if (val.status === "rejected") {
+				this.emit("error", { reason: val.reason });
+			}
+		});
+
+		this.idleConnections = [];
+		this.inUseConnections = new Set();
+
+		// 3. reject all the request from waitQueue
+		this.waitQueue.forEach((req) => req.rej("Pool destroyed"));
+
+		this.waitQueue = [];
 	}
 
 	getStats() {

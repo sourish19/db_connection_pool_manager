@@ -76,6 +76,7 @@ describe("ConnectionPool", () => {
 			expect(stats.total).toBe(5);
 		});
 
+		// this could go wrong since using a random for mock db
 		it("should queue request when pool full", async () => {
 			const conns = [];
 			for (let i = 0; i < 5; i++) {
@@ -168,6 +169,7 @@ describe("ConnectionPool", () => {
 			expect(conn.state).toBe("idle");
 		});
 
+		// this could go wrong since using a random for mock db
 		it("should process next queued request on release", async () => {
 			const conns = [];
 			for (let i = 0; i < 5; i++) {
@@ -195,6 +197,7 @@ describe("ConnectionPool", () => {
 			expect(conn.state).toBe("destroyed");
 		});
 
+		// this could go wrong since using a random for mock db in ping
 		it("should process queue in FIFO order", async () => {
 			const conns = [];
 			for (let i = 0; i < 5; i++) {
@@ -208,9 +211,9 @@ describe("ConnectionPool", () => {
 
 			await new Promise((res) => setTimeout(res, 50));
 
-			pool.release(conns[0]);
-			pool.release(conns[1]);
-			pool.release(conns[2]);
+			await pool.release(conns[0]);
+			await pool.release(conns[1]);
+			await pool.release(conns[2]);
 
 			await Promise.all([prom1, prom2, prom3]);
 			expect(order).toEqual([1, 2, 3]);
@@ -299,26 +302,41 @@ describe("ConnectionPool", () => {
 		});
 
 		it("should not deadlock under stress", async () => {
-			const promises = [];
+			const promises: Promise<void>[] = [];
+
 			for (let i = 0; i < 100; i++) {
-				promises.push(
-					pool
-						.acquire(500)
-						.then((conn) => {
-							setTimeout(() => pool.release(conn), Math.random() * 100);
-						})
-						.catch(() => {
-							/* ignore */
-						}),
-				);
+				const promise = pool
+					.acquire(500)
+					.then(
+						(conn) =>
+							new Promise<void>((resolve) => {
+								setTimeout(async () => {
+									try {
+										await pool.release(conn);
+									} finally {
+										resolve();
+									}
+								}, Math.random() * 100);
+							}),
+					)
+					.catch(() => {
+						// Ignore acquire failures due to timeout
+					});
+
+				promises.push(promise);
 			}
 
 			await Promise.race([
 				Promise.all(promises),
-				new Promise((_, rej) =>
-					setTimeout(() => rej(new Error("Deadlock timeout")), 5000),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error("Deadlock timeout")), 5000),
 				),
 			]);
+
+			const stats = pool.getStats();
+
+			expect(stats.inUse).toBe(0);
+			expect(stats.waiting).toBe(0);
 		});
 	});
 
