@@ -24,7 +24,7 @@ export class ConnectionPool extends EventEmitter {
 		this.init();
 	}
 
-	async init() {
+	init() {
 		//INFO: Pre-allocate minConnections
 
 		const minConnections = this.config.minConnections;
@@ -38,7 +38,6 @@ export class ConnectionPool extends EventEmitter {
 				const connection = new Connection(id, this.config.connectionCreator);
 
 				this.idleConnections.push(connection);
-
 				this.emit("connect", { connectionId: connection.id });
 			} catch (err: any) {
 				// ERROR: if the connection creation failed
@@ -77,10 +76,9 @@ export class ConnectionPool extends EventEmitter {
 			}, timeout);
 
 			// 3. Return idle connection if available
-			const connection = this.idleConnections[0];
+			const connection = this.idleConnections.shift();
 
 			if (connection) {
-				this.idleConnections.shift();
 				this.connectionHelperHandler(connection, timer, res);
 				return;
 			}
@@ -100,7 +98,7 @@ export class ConnectionPool extends EventEmitter {
 				} catch (err: any) {
 					// ERROR: if the connection creation failed
 					clearTimeout(timer);
-					this.emit("error");
+					this.emit("error", { err });
 					rej(new Error(err));
 					return;
 				}
@@ -131,16 +129,16 @@ export class ConnectionPool extends EventEmitter {
 			// 1. Check if the connection is marked for removal
 			if (connection.isMarkedForRemoval) {
 				// close it & remove it from inUseConnections
-				await connection.close();
 				this.inUseConnections.delete(connection);
+				await connection.close();
 			} else {
 				// 2. Validate connection health
 				const connectionHealth = await this.isHealthy(connection);
 
 				// 3. destroy connection & create new one
 				if (!connectionHealth) {
-					await connection.close();
 					this.inUseConnections.delete(connection);
+					await connection.close();
 					const newConnection = createNewConnection();
 					newConnection.state = "idle";
 					this.idleConnections.push(newConnection);
@@ -149,6 +147,7 @@ export class ConnectionPool extends EventEmitter {
 					this.inUseConnections.delete(connection);
 					connection.state = "idle";
 					this.idleConnections.push(connection);
+					this.emit("release", { connectionId: connection.id });
 				}
 			}
 
@@ -157,8 +156,8 @@ export class ConnectionPool extends EventEmitter {
 
 			if (!request) return;
 
-			// check total pool size
-			const poolSize = this.inUseConnections.size + this.idleConnections.length;
+			// // check total pool size
+			// const poolSize = this.inUseConnections.size + this.idleConnections.length;
 			const reuseConnection = this.idleConnections.shift();
 
 			if (reuseConnection) {
@@ -169,7 +168,8 @@ export class ConnectionPool extends EventEmitter {
 
 			request.connectionHelper(newConnection, request.timer, request.res);
 		} catch (err: any) {
-			console.error(err);
+			this.emit("error", err);
+			throw err;
 		}
 	}
 
@@ -177,7 +177,6 @@ export class ConnectionPool extends EventEmitter {
 		try {
 			// 2. Ping the connection & check for its status
 			const pong = await connection.ping();
-
 			if (!pong)
 				// If ping is false then close the connection
 				return false;

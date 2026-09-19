@@ -53,7 +53,6 @@ export class Connection {
 
 			return pong;
 		} catch (err: any) {
-			console.error("Db ping Error: ", err);
 			throw new Error("Error occured");
 		}
 	}
@@ -71,7 +70,6 @@ export class Connection {
 
 			return closeDb;
 		} catch (err: any) {
-			console.error("Db close Error: ", err);
 			throw new Error("Error occured");
 		}
 	}
